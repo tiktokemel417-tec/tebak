@@ -54,28 +54,24 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     user_id = callback_query.from_user.id
     chat_id = callback_query.message.chat.id
 
-    # --- LOGIKA ADMIN ---
     if data == "set_log":
-        if user_id != OWNER_ID: return await callback_query.answer("Bukan Owner!", show_alert=True)
-        # Cara pakainya: Owner kirim ID grup ke bot
+        if user_id != OWNER_ID: return await callback_query.answer("Bukan Owner!")
         await callback_query.message.edit_text("Kirim ID grup log sekarang (Contoh: -100xxx)")
-        # Nanti kita buat penangkap pesannya di bawah
         
     elif data == "send_db":
         if user_id != OWNER_ID: return
         await callback_query.message.reply_document("bot_game.db")
         await callback_query.answer("DB Terkirim")
 
-    # --- LOGIKA GAME ---
     elif data == "join_lobby":
-        if chat_id not in lobbies: return await callback_query.answer("Lobi ilang!")
-        if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Udah join!")
+        if chat_id not in lobbies: return await callback_query.answer("Lobi tidak ditemukan.")
+        if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Lo udah join!")
         if len(lobbies[chat_id]["players"]) >= 3: return await callback_query.answer("Penuh!")
         
         lobbies[chat_id]["players"].append(user_id)
+        # Update teks lobi biar kelihatan siapa aja yang join
         await callback_query.message.edit_text(
-            f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3\n"
-            f"Siap main? Klik 'Mulai'!",
+            f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3\nSiap main?",
             reply_markup=callback_query.message.reply_markup
         )
 
@@ -85,8 +81,7 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         if len(lobbies[chat_id]["players"]) < 2:
             return await callback_query.answer("Minimal 2 orang!", show_alert=True)
         
-        await callback_query.message.edit_text("🚀 **Game Dimulai! Menarik soal...**")
-        # Nanti di sini panggil fungsi ambil soal
+        await callback_query.message.edit_text("🚀 **Game Dimulai! Sedang mengambil soal...**")
 
 @app.on_message(filters.private & filters.user(OWNER_ID) & filters.text)
 async def handle_admin_input(client, message):
@@ -156,7 +151,11 @@ async def join_handler(client, callback_query: CallbackQuery):
     )
     await callback_query.answer("Berhasil gabung!")
 
-async def set_commands():
+# --- SET COMMANDS LOGIC ---
+# Kita buat fungsi pembantu biar rapi
+async def main():
+    await app.start()  # Start bot sebentar buat set command
+    print("Menyetel daftar command...")
     await app.set_bot_commands([
         bot_command("start", "Cek status bot"),
         bot_command("mulai", "Buka lobi game"),
@@ -165,9 +164,9 @@ async def set_commands():
         bot_command("stop", "Hentikan game (Admin)"),
         bot_command("admin", "Panel owner")
     ])
+    print("Bot Nyala, Bos! Silakan cek Telegram.")
+    await app.idle() # Bot standby nunggu pesan
 
-# Modifikasi bagian bawah main.py jadi gini:
 if __name__ == "__main__":
     init_db()
-    print("Bot Nyala, Bos!")
-    app.run()
+    app.run(main()) # Jalankan fungsi main yang baru kita buat
