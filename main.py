@@ -12,7 +12,7 @@ from pyrogram.types import (
     BotCommandScopeAllGroupChats
 )
 
-# --- CONFIG (Ambil dari Environment Variables Railway) ---
+# --- CONFIG ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -62,8 +62,8 @@ def get_random_question(player_count):
     return random.choice(qs) if qs else None
 
 # --- GLOBAL VARIABLES ---
-lobbies = {} # {chat_id: {"host": id, "players": []}}
-games = {}   # {chat_id: {"soal": "", "jawaban": [], "turn": 0, "players": []}}
+lobbies = {} 
+games = {}   
 
 # --- HANDLERS ---
 
@@ -94,34 +94,38 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         await callback_query.message.edit_text(f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3", reply_markup=callback_query.message.reply_markup)
     
     elif data == "start_game":
+        if chat_id not in lobbies: return
         if user_id != lobbies[chat_id]["host"]: return await callback_query.answer("Hanya Host!")
         p_list = lobbies[chat_id]["players"]
         if len(p_list) < 2: return await callback_query.answer("Minimal 2 orang!")
         
         q = get_random_question(len(p_list))
+        if not q: return await callback_query.answer("Soal tidak ditemukan!")
+        
         ans_list = q[1].split(",")
         games[chat_id] = {"soal": q[0], "jawaban": ans_list, "turn": 0, "players": p_list}
         
-        p_mention = (await client.get_users(p_list[0])).mention
-        await callback_query.message.edit_text(f"🚀 **GAME DIMULAI!**\n\n❓ **SOAL:** {q[0]}\n👉 Giliran: {p_mention}\nJawab kata ke-1!")
+        p_info = await client.get_users(p_list[0])
+        await callback_query.message.edit_text(f"🚀 **GAME DIMULAI!**\n\n❓ **SOAL:** {q[0]}\n👉 Giliran: {p_info.mention}\nJawab kata ke-1!")
         del lobbies[chat_id]
 
-@app.on_message(filters.group & filters.text & ~filters.command(["mulai", "stop", "help"]))
+@app.on_message(filters.group & filters.text & ~filters.command(["mulai", "stop", "help", "top", "start", "admin"]))
 async def check_answer(client, message):
     chat_id = message.chat.id
     if chat_id not in games: return
-    
     game = games[chat_id]
     if message.from_user.id != game["players"][game["turn"]]: return
     
     if message.text.strip().lower() == game["jawaban"][game["turn"]].lower():
         game["turn"] += 1
         if game["turn"] >= len(game["jawaban"]):
-            await message.reply("✅ **MENANG!** Semua dapet +10 poin!")
+            for p_id in game["players"]:
+                db_query("UPDATE users SET points = points + 10 WHERE user_id = ?", (p_id,), commit=True)
+            await message.reply("✅ **MENANG!** Semua dapet +10 poin! 🏆")
             del games[chat_id]
         else:
-            p_mention = (await client.get_users(game["players"][game["turn"]])).mention
-            await message.reply(f"✅ Bener! Sekarang {p_mention} jawab kata ke-{game['turn']+1}!")
+            p_info = await client.get_users(game["players"][game["turn"]])
+            await message.reply(f"✅ Bener! Sekarang {p_info.mention} jawab kata ke-{game['turn']+1}!")
 
 @app.on_message(filters.command("mulai") & filters.group)
 async def start_lobby(client, message):
@@ -130,12 +134,48 @@ async def start_lobby(client, message):
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("Gabung ➕", callback_data="join_lobby")], [InlineKeyboardButton("Mulai ▶️", callback_data="start_game")]])
     await message.reply(f"🎮 **Lobi Dibuka!**\nPemain: 1/3", reply_markup=kb)
 
+@app.on_message(filters.command("start") & filters.private)
+async def start_private(client, message):
+    user = message.from_user
+    db_query("INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)", (user.id, user.username), commit=True)
+    link_dev = db_query("SELECT value FROM settings WHERE key='link_dev'", fetchone=True)[0]
+    link_sup = db_query("SELECT value FROM settings WHERE key='link_sup'", fetchone=True)[0]
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Dev 👨‍💻", url=link_dev), InlineKeyboardButton("Support 👥", url=link_sup)]])
+    await message.reply(f"Halo **{user.first_name}**! 👋\nGunakan `/mulai` di grup untuk main.", reply_markup=kb)
+
+@app.on_message(filters.command("top"))
+async def leaderboard(client, message):
+    res = db_query("SELECT username, points FROM users ORDER BY points DESC LIMIT 10")
+    if not res: return await message.reply("Belum ada pemain!")
+    text = "🏆 **TOP 10 PEMAIN TERJAGO** 🏆\n\n"
+    for i, (username, points) in enumerate(res, 1):
+        un = f"@{username}" if username else "Anonim"
+        text += f"{i}. {un} — `{points} pts`\n"
+    await message.reply(text)
+
+# --- BOT STARTUP LOGIC ---
 async def main():
     await app.start()
-    await app.set_bot_commands([BotCommand("start", "Cek status"), BotCommand("mulai", "Buka lobi")], scope=BotCommandScopeAllGroupChats())
-    await app.set_bot_commands([BotCommand("admin", "Panel Owner"), BotCommand("start", "Cek status")], scope=BotCommandScopeChat(OWNER_ID))
-    print("Bot Ready!")
+    await app.delete_bot_commands()
+    
+    # Menu Group
+    await app.set_bot_commands([
+        BotCommand("start", "Cek status"),
+        BotCommand("mulai", "Buka lobi"),
+        BotCommand("top", "Peringkat"),
+        BotCommand("help", "Cara main")
+    ], scope=BotCommandScopeAllGroupChats())
+
+    # Menu Owner
+    await app.set_bot_commands([
+        BotCommand("start", "Cek status"),
+        BotCommand("admin", "Panel Owner"),
+        BotCommand("mulai", "Buka lobi"),
+    ], scope=BotCommandScopeChat(OWNER_ID))
+
+    print("✅ Bot Ready & Commands Synced!")
     await idle()
+    await app.stop()
 
 if __name__ == "__main__":
     init_db()
