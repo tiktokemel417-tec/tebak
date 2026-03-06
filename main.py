@@ -2,6 +2,7 @@ import os
 import sqlite3
 import json
 from pyrogram import Client, filters
+from pyrogram.types import BotCommand as bot_command
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 
 # --- CONFIG ---
@@ -47,10 +48,55 @@ async def admin_panel(client, message):
     ])
     await message.reply("🛠 **Admin Panel**\nSilakan pilih menu di bawah:", reply_markup=kb)
 
-@app.on_callback_query(filters.regex("send_db"))
-async def handle_senddb(client, callback_query: CallbackQuery):
-    await callback_query.message.reply_document("bot_game.db", caption="Ini database terbaru lo.")
-    await callback_query.answer("DB Sent!")
+@app.on_callback_query()
+async def handle_callbacks(client, callback_query: CallbackQuery):
+    data = callback_query.data
+    user_id = callback_query.from_user.id
+    chat_id = callback_query.message.chat.id
+
+    # --- LOGIKA ADMIN ---
+    if data == "set_log":
+        if user_id != OWNER_ID: return await callback_query.answer("Bukan Owner!", show_alert=True)
+        # Cara pakainya: Owner kirim ID grup ke bot
+        await callback_query.message.edit_text("Kirim ID grup log sekarang (Contoh: -100xxx)")
+        # Nanti kita buat penangkap pesannya di bawah
+        
+    elif data == "send_db":
+        if user_id != OWNER_ID: return
+        await callback_query.message.reply_document("bot_game.db")
+        await callback_query.answer("DB Terkirim")
+
+    # --- LOGIKA GAME ---
+    elif data == "join_lobby":
+        if chat_id not in lobbies: return await callback_query.answer("Lobi ilang!")
+        if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Udah join!")
+        if len(lobbies[chat_id]["players"]) >= 3: return await callback_query.answer("Penuh!")
+        
+        lobbies[chat_id]["players"].append(user_id)
+        await callback_query.message.edit_text(
+            f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3\n"
+            f"Siap main? Klik 'Mulai'!",
+            reply_markup=callback_query.message.reply_markup
+        )
+
+    elif data == "start_game":
+        if user_id != lobbies[chat_id]["host"]: 
+            return await callback_query.answer("Cuma Host yang bisa mulai!", show_alert=True)
+        if len(lobbies[chat_id]["players"]) < 2:
+            return await callback_query.answer("Minimal 2 orang!", show_alert=True)
+        
+        await callback_query.message.edit_text("🚀 **Game Dimulai! Menarik soal...**")
+        # Nanti di sini panggil fungsi ambil soal
+
+@app.on_message(filters.private & filters.user(OWNER_ID) & filters.text)
+async def handle_admin_input(client, message):
+    # Cek apakah owner lagi mau set log group
+    if message.text.startswith("-100"):
+        conn = sqlite3.connect('bot_game.db')
+        conn.execute('UPDATE settings SET value = ? WHERE key = "log_group"', (message.text,))
+        conn.commit()
+        conn.close()
+        await message.reply(f"✅ Log Group berhasil di-set ke: {message.text}")
 
 # --- FEATURE: UPDATE DB (ANTI-RESET RAILWAY) ---
 @app.on_message(filters.command("update") & filters.user(OWNER_ID) & filters.reply)
@@ -110,5 +156,18 @@ async def join_handler(client, callback_query: CallbackQuery):
     )
     await callback_query.answer("Berhasil gabung!")
 
-# Lanjut run...
-app.run()
+async def set_commands():
+    await app.set_bot_commands([
+        bot_command("start", "Cek status bot"),
+        bot_command("mulai", "Buka lobi game"),
+        bot_command("top", "Lihat peringkat 10 besar"),
+        bot_command("help", "Cara bermain"),
+        bot_command("stop", "Hentikan game (Admin)"),
+        bot_command("admin", "Panel owner")
+    ])
+
+# Modifikasi bagian bawah main.py jadi gini:
+if __name__ == "__main__":
+    init_db()
+    print("Bot Nyala, Bos!")
+    app.run()
