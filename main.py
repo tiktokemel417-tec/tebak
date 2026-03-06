@@ -1,12 +1,18 @@
 import os
 import sqlite3
 import json
-from pyrogram import idle
-from pyrogram import Client, filters
-from pyrogram.types import BotCommand as bot_command
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+import random
+from pyrogram import Client, filters, idle
+from pyrogram.types import (
+    InlineKeyboardMarkup, 
+    InlineKeyboardButton, 
+    CallbackQuery, 
+    BotCommand, 
+    BotCommandScopeChat, 
+    BotCommandScopeAllGroupChats
+)
 
-# --- CONFIG ---
+# --- CONFIG (Ambil dari Environment Variables Railway) ---
 API_ID = int(os.getenv("API_ID"))
 API_HASH = os.getenv("API_HASH")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -14,7 +20,7 @@ OWNER_ID = int(os.getenv("OWNER_ID"))
 
 app = Client("bot_tebak", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 
-# --- DATABASE ---
+# --- DATABASE LOGIC ---
 def db_query(query, params=(), fetchone=False, commit=False):
     conn = sqlite3.connect('bot_game.db')
     cursor = conn.cursor()
@@ -30,16 +36,37 @@ def init_db():
     c.execute('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, username TEXT, points INTEGER DEFAULT 0)')
     c.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)')
     c.execute('CREATE TABLE IF NOT EXISTS questions (id INTEGER PRIMARY KEY AUTOINCREMENT, soal TEXT, jawaban TEXT, word_count INTEGER)')
-    # Default Settings
     c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("link_dev", "https://t.me/rian_eka")')
     c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("link_sup", "https://t.me/support")')
     c.execute('INSERT OR IGNORE INTO settings (key, value) VALUES ("log_group", "0")')
     conn.commit()
     conn.close()
 
-init_db()
+def seed_questions():
+    check = db_query("SELECT COUNT(*) FROM questions", fetchone=True)[0]
+    if check == 0:
+        data = [
+            ("Ibukota Jawa Barat", "Kota,Bandung", 2),
+            ("Warna bendera Indonesia", "Merah,Putih", 2),
+            ("Singkatan dari Air Susu Ibu", "Air,Susu,Ibu", 3),
+            ("Tempat parkir pesawat", "Bandara,Udara", 2),
+            ("Alat transportasi rel", "Kereta,Api,Listrik", 3)
+        ]
+        conn = sqlite3.connect('bot_game.db')
+        conn.executemany("INSERT INTO questions (soal, jawaban, word_count) VALUES (?, ?, ?)", data)
+        conn.commit()
+        conn.close()
 
-# --- ADMIN PANEL ---
+def get_random_question(player_count):
+    qs = db_query("SELECT soal, jawaban FROM questions WHERE word_count <= ?", (player_count,))
+    return random.choice(qs) if qs else None
+
+# --- GLOBAL VARIABLES ---
+lobbies = {} # {chat_id: {"host": id, "players": []}}
+games = {}   # {chat_id: {"soal": "", "jawaban": [], "turn": 0, "players": []}}
+
+# --- HANDLERS ---
+
 @app.on_message(filters.command("admin") & filters.user(OWNER_ID))
 async def admin_panel(client, message):
     kb = InlineKeyboardMarkup([
@@ -47,7 +74,7 @@ async def admin_panel(client, message):
         [InlineKeyboardButton("Backup DB (SendDB)", callback_data="send_db")],
         [InlineKeyboardButton("Update Links", callback_data="set_links")]
     ])
-    await message.reply("🛠 **Admin Panel**\nSilakan pilih menu di bawah:", reply_markup=kb)
+    await message.reply("🛠 **Admin Panel**", reply_markup=kb)
 
 @app.on_callback_query()
 async def handle_callbacks(client, callback_query: CallbackQuery):
@@ -56,118 +83,61 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
     chat_id = callback_query.message.chat.id
 
     if data == "set_log":
-        if user_id != OWNER_ID: return await callback_query.answer("Bukan Owner!")
         await callback_query.message.edit_text("Kirim ID grup log sekarang (Contoh: -100xxx)")
-        
     elif data == "send_db":
-        if user_id != OWNER_ID: return
         await callback_query.message.reply_document("bot_game.db")
-        await callback_query.answer("DB Terkirim")
-
     elif data == "join_lobby":
-        if chat_id not in lobbies: return await callback_query.answer("Lobi tidak ditemukan.")
+        if chat_id not in lobbies: return
         if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Lo udah join!")
-        if len(lobbies[chat_id]["players"]) >= 3: return await callback_query.answer("Penuh!")
-        
+        if len(lobbies[chat_id]["players"]) >= 3: return await callback_query.answer("Lobi penuh!")
         lobbies[chat_id]["players"].append(user_id)
-        # Update teks lobi biar kelihatan siapa aja yang join
-        await callback_query.message.edit_text(
-            f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3\nSiap main?",
-            reply_markup=callback_query.message.reply_markup
-        )
-
+        await callback_query.message.edit_text(f"🎮 **Lobi Terbuka!**\nPemain: {len(lobbies[chat_id]['players'])}/3", reply_markup=callback_query.message.reply_markup)
+    
     elif data == "start_game":
-        if user_id != lobbies[chat_id]["host"]: 
-            return await callback_query.answer("Cuma Host yang bisa mulai!", show_alert=True)
-        if len(lobbies[chat_id]["players"]) < 2:
-            return await callback_query.answer("Minimal 2 orang!", show_alert=True)
+        if user_id != lobbies[chat_id]["host"]: return await callback_query.answer("Hanya Host!")
+        p_list = lobbies[chat_id]["players"]
+        if len(p_list) < 2: return await callback_query.answer("Minimal 2 orang!")
         
-        await callback_query.message.edit_text("🚀 **Game Dimulai! Sedang mengambil soal...**")
-
-@app.on_message(filters.private & filters.user(OWNER_ID) & filters.text)
-async def handle_admin_input(client, message):
-    # Cek apakah owner lagi mau set log group
-    if message.text.startswith("-100"):
-        conn = sqlite3.connect('bot_game.db')
-        conn.execute('UPDATE settings SET value = ? WHERE key = "log_group"', (message.text,))
-        conn.commit()
-        conn.close()
-        await message.reply(f"✅ Log Group berhasil di-set ke: {message.text}")
-
-# --- FEATURE: UPDATE DB (ANTI-RESET RAILWAY) ---
-@app.on_message(filters.command("update") & filters.user(OWNER_ID) & filters.reply)
-async def sync_db(client, message):
-    if not message.reply_to_message.document:
-        return await message.reply("Reply file .db nya!")
-    
-    path = await message.reply_to_message.download("temp_old.db")
-    old_conn = sqlite3.connect(path)
-    new_conn = sqlite3.connect("bot_game.db")
-    
-    # Sync Users (Hanya tambah yang belum ada)
-    users = old_conn.execute("SELECT * FROM users").fetchall()
-    for u in users:
-        new_conn.execute("INSERT OR IGNORE INTO users VALUES (?, ?, ?)", u)
-    
-    # Sync Questions
-    qs = old_conn.execute("SELECT * FROM questions").fetchall()
-    for q in qs:
-        new_conn.execute("INSERT OR IGNORE INTO questions (soal, jawaban, word_count) VALUES (?, ?, ?)", (q[1], q[2], q[3]))
+        q = get_random_question(len(p_list))
+        ans_list = q[1].split(",")
+        games[chat_id] = {"soal": q[0], "jawaban": ans_list, "turn": 0, "players": p_list}
         
-    new_conn.commit()
-    await message.reply("✅ Sinkronisasi Berhasil! Data lama sudah digabung.")
+        p_mention = (await client.get_users(p_list[0])).mention
+        await callback_query.message.edit_text(f"🚀 **GAME DIMULAI!**\n\n❓ **SOAL:** {q[0]}\n👉 Giliran: {p_mention}\nJawab kata ke-1!")
+        del lobbies[chat_id]
 
-# --- LOBBY SYSTEM (BASIC) ---
-lobbies = {} # {chat_id: {"host": id, "players": [ids]}}
+@app.on_message(filters.group & filters.text & ~filters.command(["mulai", "stop", "help"]))
+async def check_answer(client, message):
+    chat_id = message.chat.id
+    if chat_id not in games: return
+    
+    game = games[chat_id]
+    if message.from_user.id != game["players"][game["turn"]]: return
+    
+    if message.text.strip().lower() == game["jawaban"][game["turn"]].lower():
+        game["turn"] += 1
+        if game["turn"] >= len(game["jawaban"]):
+            await message.reply("✅ **MENANG!** Semua dapet +10 poin!")
+            del games[chat_id]
+        else:
+            p_mention = (await client.get_users(game["players"][game["turn"]])).mention
+            await message.reply(f"✅ Bener! Sekarang {p_mention} jawab kata ke-{game['turn']+1}!")
 
 @app.on_message(filters.command("mulai") & filters.group)
 async def start_lobby(client, message):
     chat_id = message.chat.id
-    if chat_id in lobbies:
-        return await message.reply("Lobi sudah terbuka!")
-    
     lobbies[chat_id] = {"host": message.from_user.id, "players": [message.from_user.id]}
-    
-    kb = InlineKeyboardMarkup([
-        [InlineKeyboardButton("Gabung ➕", callback_data="join_lobby")],
-        [InlineKeyboardButton("Mulai Game ▶️", callback_data="start_game")]
-    ])
-    await message.reply(f"🎮 **Lobi Dibuka!**\nHost: {message.from_user.first_name}\nPemain: 1/3", reply_markup=kb)
+    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Gabung ➕", callback_data="join_lobby")], [InlineKeyboardButton("Mulai ▶️", callback_data="start_game")]])
+    await message.reply(f"🎮 **Lobi Dibuka!**\nPemain: 1/3", reply_markup=kb)
 
-@app.on_callback_query(filters.regex("join_lobby"))
-async def join_handler(client, callback_query: CallbackQuery):
-    chat_id = callback_query.message.chat.id
-    user_id = callback_query.from_user.id
-    
-    if chat_id not in lobbies: return await callback_query.answer("Lobi sudah tutup.")
-    if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Lo udah join!")
-    if len(lobbies[chat_id]["players"]) >= 3: return await callback_query.answer("Lobi penuh!")
-    
-    lobbies[chat_id]["players"].append(user_id)
-    count = len(lobbies[chat_id]["players"])
-    
-    await callback_query.message.edit_text(
-        f"🎮 **Lobi Dibuka!**\nPemain: {count}/3\nDaftar: " + ", ".join([str(p) for p in lobbies[chat_id]["players"]]),
-        reply_markup=callback_query.message.reply_markup
-    )
-    await callback_query.answer("Berhasil gabung!")
-
-# --- SET COMMANDS LOGIC ---
 async def main():
     await app.start()
-    print("Menyetel daftar command...")
-    await app.set_bot_commands([
-        bot_command("start", "Cek status bot"),
-        bot_command("mulai", "Buka lobi game"),
-        bot_command("top", "Lihat peringkat 10 besar"),
-        bot_command("help", "Cara bermain"),
-        bot_command("stop", "Hentikan game (Admin)"),
-        bot_command("admin", "Panel owner")
-    ])
-    print("Bot Nyala, Bos! Silakan cek Telegram.")
-    await idle() # INI PERBAIKANNYA: pake idle() bukan app.idle()
-    await app.stop()
+    await app.set_bot_commands([BotCommand("start", "Cek status"), BotCommand("mulai", "Buka lobi")], scope=BotCommandScopeAllGroupChats())
+    await app.set_bot_commands([BotCommand("admin", "Panel Owner"), BotCommand("start", "Cek status")], scope=BotCommandScopeChat(OWNER_ID))
+    print("Bot Ready!")
+    await idle()
 
 if __name__ == "__main__":
     init_db()
+    seed_questions()
     app.run(main())
