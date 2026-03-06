@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import json
+from pyrogram import idle
 from pyrogram import Client, filters
 from pyrogram.types import BotCommand as bot_command
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -152,9 +153,8 @@ async def join_handler(client, callback_query: CallbackQuery):
     await callback_query.answer("Berhasil gabung!")
 
 # --- SET COMMANDS LOGIC ---
-# Kita buat fungsi pembantu biar rapi
 async def main():
-    await app.start()  # Start bot sebentar buat set command
+    await app.start()
     print("Menyetel daftar command...")
     await app.set_bot_commands([
         bot_command("start", "Cek status bot"),
@@ -165,8 +165,9 @@ async def main():
         bot_command("admin", "Panel owner")
     ])
     print("Bot Nyala, Bos! Silakan cek Telegram.")
-    await app.idle() # Bot standby nunggu pesan
+    await idle() # INI PERBAIKANNYA: pake idle() bukan app.idle()
+    await app.stop()
 
 if __name__ == "__main__":
     init_db()
-    app.run(main()) # Jalankan fungsi main yang baru kita buat
+    app.run(main())
