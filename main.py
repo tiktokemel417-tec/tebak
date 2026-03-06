@@ -138,10 +138,21 @@ async def start_lobby(client, message):
 async def start_private(client, message):
     user = message.from_user
     db_query("INSERT OR IGNORE INTO users (user_id, username) VALUES (?, ?)", (user.id, user.username), commit=True)
+    
     link_dev = db_query("SELECT value FROM settings WHERE key='link_dev'", fetchone=True)[0]
     link_sup = db_query("SELECT value FROM settings WHERE key='link_sup'", fetchone=True)[0]
-    kb = InlineKeyboardMarkup([[InlineKeyboardButton("Dev 👨‍💻", url=link_dev), InlineKeyboardButton("Support 👥", url=link_sup)]])
-    await message.reply(f"Halo **{user.first_name}**! 👋\nGunakan `/mulai` di grup untuk main.", reply_markup=kb)
+
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Dev 👨‍💻", url=link_dev), InlineKeyboardButton("Support 👥", url=link_sup)],
+        [InlineKeyboardButton("➕ Tambah ke Grup", url=f"https://t.me/{client.me.username}?startgroup=true")]
+    ])
+    
+    await message.reply(
+        f"Halo **{user.first_name}**! 👋\n\n"
+        "Gue adalah Bot Tebak Kata Berantai. Cara mainnya harus kompak!\n\n"
+        "Gunakan `/mulai` di grup untuk main.", 
+        reply_markup=kb
+    )
 
 @app.on_message(filters.command("top"))
 async def leaderboard(client, message):
@@ -149,33 +160,33 @@ async def leaderboard(client, message):
     if not res: return await message.reply("Belum ada pemain!")
     text = "🏆 **TOP 10 PEMAIN TERJAGO** 🏆\n\n"
     for i, (username, points) in enumerate(res, 1):
-        un = f"@{username}" if username else "Anonim"
+        un = f"@{username}" if username else f"User {i}"
         text += f"{i}. {un} — `{points} pts`\n"
     await message.reply(text)
 
 # --- BOT STARTUP LOGIC ---
 async def main():
-    await app.start()
-    await app.delete_bot_commands()
+    async with app:
+        # Hapus dulu biar bersih
+        await app.delete_bot_commands()
+        
+        # Menu Group (Semua Orang)
+        await app.set_bot_commands([
+            BotCommand("start", "Cek status"),
+            BotCommand("mulai", "Buka lobi"),
+            BotCommand("top", "Peringkat"),
+            BotCommand("help", "Cara main")
+        ], scope=BotCommandScopeAllGroupChats())
+
+        # Menu Owner (Privat lo)
+        await app.set_bot_commands([
+            BotCommand("start", "Cek status"),
+            BotCommand("admin", "Panel Owner"),
+        ], scope=BotCommandScopeChat(OWNER_ID))
+        
+        print("✅ Bot Ready & Menu Updated!")
     
-    # Menu Group
-    await app.set_bot_commands([
-        BotCommand("start", "Cek status"),
-        BotCommand("mulai", "Buka lobi"),
-        BotCommand("top", "Peringkat"),
-        BotCommand("help", "Cara main")
-    ], scope=BotCommandScopeAllGroupChats())
-
-    # Menu Owner
-    await app.set_bot_commands([
-        BotCommand("start", "Cek status"),
-        BotCommand("admin", "Panel Owner"),
-        BotCommand("mulai", "Buka lobi"),
-    ], scope=BotCommandScopeChat(OWNER_ID))
-
-    print("✅ Bot Ready & Commands Synced!")
     await idle()
-    await app.stop()
 
 if __name__ == "__main__":
     init_db()
