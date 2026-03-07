@@ -197,7 +197,7 @@ async def check_answer(client, message):
     if input_user == target_ans:
         game["turn"] += 1
         game["salah_count"] = 0 
-        
+    
         if game["turn"] >= len(game["jawaban"]):
             # MENANG SATU SOAL -> LANJUT OTOMATIS
             for pid in game["players"]:
@@ -206,12 +206,14 @@ async def check_answer(client, message):
             await message.reply("✅ **KOMPAK!** Semua dapet +10 poin.\n⏳ Menyiapkan soal berikutnya...")
             await asyncio.sleep(2)
             
-            # Cari soal baru
+            # AMBIL SOAL BARU
             qs_list = get_new_question(chat_id, len(game["players"]))
-           if not qs_list:
-               await message.reply("🏁 **SOAL HABIS!** Game selesai.")
-               if chat_id in games: del games[chat_id]
-               return
+            
+            if not qs_list:
+                await message.reply("🏁 **SOAL HABIS!** Game selesai.")
+                if chat_id in games:
+                    del games[chat_id]
+                return
             
             q = random.choice(qs_list)
             game["soal"] = q[1]
