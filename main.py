@@ -88,12 +88,11 @@ async def admin_panel(client, message):
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("➕ Add Soal", callback_data="admin_addsoal"), InlineKeyboardButton("📝 Set Start", callback_data="admin_setstart")],
         [InlineKeyboardButton("👤 Set Owner", callback_data="set_owner_link"), InlineKeyboardButton("👥 Set Support", callback_data="set_sup_link")],
-        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_bc"), InlineKeyboardButton("📊 Stats", callback_data="stats")],
-        [InlineKeyboardButton("🆔 Set Log", callback_data="set_log"), InlineKeyboardButton("📁 Send DB", callback_data="send_db")],
-        [InlineKeyboardButton("🔄 Reset Poin", callback_data="reset_all")]
+        [InlineKeyboardButton("💰 Set Poin User", callback_data="admin_setpoint"), InlineKeyboardButton("📊 Stats", callback_data="stats")],
+        [InlineKeyboardButton("📢 Broadcast", callback_data="admin_bc"), InlineKeyboardButton("🆔 Set Log", callback_data="set_log")],
+        [InlineKeyboardButton("📁 Send DB", callback_data="send_db"), InlineKeyboardButton("🔄 Reset Poin", callback_data="reset_all")]
     ])
-    await message.reply("🛠 **SUPER ADMIN PANEL**", reply_markup=kb)
-
+    await message.reply("🛠 **SUPER ADMIN PANEL UI**\n\nKlik tombol di bawah untuk mengelola bot tanpa ketik perintah manual.", reply_markup=kb)
 @app.on_message(filters.command("start") & filters.private)
 async def start_private(client, message):
     user = message.from_user
@@ -127,31 +126,45 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         text = f"📊 **STATISTIK**\n👤 User: `{u_count}`\n🏰 Grup: `{g_count}`\n📝 Soal: `{q_count}`"
         await callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back_admin")]]))
 
-    elif data.startswith("my_point_"):
-        # Real-time update username sebelum cek poin
-        db_execute("UPDATE users SET username = ? WHERE user_id = ?", (callback_query.from_user.username, user_id), commit=True)
-        res = db_execute("SELECT points FROM users WHERE user_id = ?", (user_id,), fetchone=True)
-        point = res[0] if res else 0
-        rank = db_execute("SELECT COUNT(*) FROM users WHERE points > ?", (point,), fetchone=True)[0] + 1
-        text = f"👤 **PROFIL POIN**\n\nID: `{user_id}`\nPoin: `{point}`\nRanking: `{rank}`"
-        await callback_query.message.edit_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back_to_top")]]))
+    elif data == "send_db":
+        await callback_query.message.reply_document("bot_game.db")
+        await callback_query.answer("File Database dikirim!")
 
-    elif data == "back_to_top":
-        users = db_execute("SELECT user_id, username, points FROM users WHERE points > 0 ORDER BY points DESC LIMIT 10")
-        text = "🏆 **LEADERBOARD POIN** 🏆\n\n"
-        if not users: text += "Belum ada skor."
-        for i, (uid, username, points) in enumerate(users, 1):
-            mention = f"@{username}" if username else f"User {uid}"
-            medal = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            text += f"{medal} [{mention}](tg://user?id={uid}) — `{points} Poin`\n"
-        kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 Cek Poin Saya", callback_data=f"my_point_{user_id}")]])
-        await callback_query.message.edit_text(text, reply_markup=kb, disable_web_page_preview=True)
+    elif data == "reset_all":
+        kb = InlineKeyboardMarkup([[InlineKeyboardButton("YA, RESET", callback_data="confirm_reset")], [InlineKeyboardButton("BATAL", callback_data="back_admin")]])
+        await callback_query.message.edit_text("⚠️ **YAKIN RESET SEMUA POIN?**", reply_markup=kb)
+
+    elif data == "confirm_reset":
+        db_execute("UPDATE users SET points = 0", commit=True)
+        await callback_query.answer("🔥 POIN DIRESET!", show_alert=True)
+        await callback_query.message.edit_text("✅ Semua poin user telah kembali ke 0.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Kembali", callback_data="back_admin")]]))
+
+    elif data == "back_admin":
+        # Panggil ulang panel utama
+        await admin_panel(client, callback_query.message)
+        await callback_query.message.delete()
+
+    # --- LOGIKA UI INPUT (Pakai ForceReply biar gak ngetik CMD) ---
+    elif data == "admin_addsoal":
+        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan format:\n`Soal | Kata1,Kata2`", reply_markup=filters.force_reply)
+    
+    elif data == "admin_setstart":
+        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan pesan Start baru lu.", reply_markup=filters.force_reply)
+        
+    elif data == "admin_bc":
+        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan pesan yang mau di-broadcast.", reply_markup=filters.force_reply)
+
+    elif data == "set_log":
+        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan ID Grup Log (Contoh: `-10012345`).", reply_markup=filters.force_reply)
+
+    elif data == "admin_setpoint":
+        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan format:\n`ID_USER | JUMLAH_POIN`", reply_markup=filters.force_reply)
 
     elif data == "set_owner_link":
-        await callback_query.message.edit_text("Ketik `/setdev URL_TELEGRAM` (Contoh: `/setdev https://t.me/rian_eka`)")
-    
+        await client.send_message(chat_id, "Reply dengan link Telegram lu (Contoh: `https://t.me/rian`).", reply_markup=filters.force_reply)
+
     elif data == "set_sup_link":
-        await callback_query.message.edit_text("Ketik `/setsup URL_GRUP` (Contoh: `/setsup https://t.me/rian_eka_support`)")
+        await client.send_message(chat_id, "Reply dengan link Grup Support lu.", reply_markup=filters.force_reply)
 
     elif data == "join_lobby":
         if chat_id not in lobbies: return await callback_query.answer("Lobi ditutup!")
@@ -274,6 +287,52 @@ async def leaderboard_cmd(client, message):
         text += f"{medal} [{mention}](tg://user?id={uid}) — `{points} Poin`\n"
     kb = InlineKeyboardMarkup([[InlineKeyboardButton("📊 Cek Poin Saya", callback_data=f"my_point_{message.from_user.id}")]])
     await message.reply(text, reply_markup=kb, disable_web_page_preview=True)
+
+@app.on_message(filters.reply & filters.user(OWNER_ID) & filters.private)
+async def handle_admin_replies(client, message):
+    reply_text = message.reply_to_message.text
+    input_data = message.text
+
+    if "Soal | Kata1,Kata2" in reply_text:
+        try:
+            soal, jawaban = input_data.split("|")
+            word_count = len(jawaban.strip().split(","))
+            db_execute("INSERT INTO questions (soal, jawaban, word_count) VALUES (?, ?, ?)", (soal.strip(), jawaban.strip(), word_count), commit=True)
+            await message.reply("✅ Soal berhasil ditambah!")
+        except: await message.reply("❌ Format salah! Pakai `Soal | Kata1,Kata2`")
+
+    elif "pesan Start baru" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'start_msg'", (input_data,), commit=True)
+        await message.reply("✅ Pesan /start diubah!")
+
+    elif "ID Grup Log" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'log_group'", (input_data,), commit=True)
+        await message.reply(f"✅ Log Group diset ke `{input_data}`")
+
+    elif "ID_USER | JUMLAH_POIN" in reply_text:
+        try:
+            uid, pts = input_data.split("|")
+            db_execute("UPDATE users SET points = ? WHERE user_id = ?", (pts.strip(), uid.strip()), commit=True)
+            await message.reply(f"✅ User `{uid.strip()}` sekarang punya `{pts.strip()}` poin.")
+        except: await message.reply("❌ Format salah! Pakai `ID_USER | JUMLAH_POIN`")
+
+    elif "broadcast" in reply_text:
+        users = db_execute("SELECT user_id FROM users")
+        count = 0
+        for (uid,) in users:
+            try:
+                await client.send_message(uid, input_data)
+                count += 1
+            except: pass
+        await message.reply(f"✅ Berhasil broadcast ke {count} user.")
+
+    elif "link Telegram lu" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'link_dev'", (input_data,), commit=True)
+        await message.reply("✅ Link Owner diupdate!")
+
+    elif "link Grup Support" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'link_sup'", (input_data,), commit=True)
+        await message.reply("✅ Link Support diupdate!")
 
 # --- STARTUP ---
 async def start_bot():
