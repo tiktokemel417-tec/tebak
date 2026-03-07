@@ -323,12 +323,15 @@ async def start_lobby(client, message):
 @app.on_message(filters.command("stop") & filters.group)
 async def stop_game(client, message):
     chat_id = message.chat.id
-    # Cek apakah pengirim adalah host atau admin (biar gak dirusuhin orang asing)
-    if chat_id in games or chat_id in lobbies:
-        del games[chat_id] if chat_id in games else lobbies.pop(chat_id)
-        await message.reply("🛑 **Game/Lobi dihentikan paksa!**")
+    # Kita pisah manual biar Python gak bingung
+    if chat_id in games:
+        del games[chat_id]
+        await message.reply("🛑 **Game dihentikan paksa!**")
+    elif chat_id in lobbies:
+        del lobbies[chat_id]
+        await message.reply("🛑 **Lobi dibatalkan!**")
     else:
-        await message.reply("Gak ada game yang lagi jalan, bos.")
+        await message.reply("Gak ada game atau lobi yang lagi jalan, bos.")
 
 @app.on_message(filters.command("gabung") & filters.group)
 async def gabung_manual(client, message):
