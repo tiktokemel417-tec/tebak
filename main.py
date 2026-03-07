@@ -145,27 +145,28 @@ async def handle_callbacks(client, callback_query: CallbackQuery):
         await callback_query.message.delete()
 
     # --- LOGIKA UI INPUT (Pakai ForceReply biar gak ngetik CMD) ---
+    # --- LOGIKA UI INPUT ---
     elif data == "admin_addsoal":
-        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan format:\n`Soal | Kata1,Kata2`", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** pesan ini dengan format:\n`Soal | Kata1,Kata2`")
     
     elif data == "admin_setstart":
-        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan pesan Start baru lu.", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** pesan ini dengan pesan **Start baru** lu.")
         
     elif data == "admin_bc":
-        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan pesan yang mau di-broadcast.", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** pesan ini dengan pesan yang mau di-**broadcast**.")
 
     elif data == "set_log":
-        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan ID Grup Log (Contoh: `-10012345`).", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** pesan ini dengan **ID Grup Log** (Contoh: `-10012345`).")
 
     elif data == "admin_setpoint":
-        await client.send_message(chat_id, "Silahkan Reply pesan ini dengan format:\n`ID_USER | JUMLAH_POIN`", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** pesan ini dengan format:\n`ID_USER | JUMLAH_POIN`")
 
     elif data == "set_owner_link":
-        await client.send_message(chat_id, "Reply dengan link Telegram lu (Contoh: `https://t.me/rian`).", reply_markup=filters.force_reply)
+        await client.send_message(chat_id, "Silahkan **Reply** dengan **link Telegram lu** (Contoh: `https://t.me/rian`).")
 
     elif data == "set_sup_link":
-        await client.send_message(chat_id, "Reply dengan link Grup Support lu.", reply_markup=filters.force_reply)
-
+        await client.send_message(chat_id, "Silahkan **Reply** dengan **link Grup Support** lu.")
+        
     elif data == "join_lobby":
         if chat_id not in lobbies: return await callback_query.answer("Lobi ditutup!")
         if user_id in lobbies[chat_id]["players"]: return await callback_query.answer("Sudah gabung!")
@@ -334,21 +335,80 @@ async def handle_admin_replies(client, message):
         db_execute("UPDATE settings SET value = ? WHERE key = 'link_sup'", (input_data,), commit=True)
         await message.reply("✅ Link Support diupdate!")
 
+@app.on_message(filters.reply & filters.user(OWNER_ID) & filters.private)
+async def handle_admin_replies(client, message):
+    # Ambil teks dari pesan yang kita (bot) kirim sebelumnya
+    reply_text = message.reply_to_message.text.lower()
+    input_data = message.text
+
+    if "soal | kata1,kata2" in reply_text:
+        try:
+            soal, jawaban = input_data.split("|")
+            word_count = len(jawaban.strip().split(","))
+            db_execute("INSERT INTO questions (soal, jawaban, word_count) VALUES (?, ?, ?)", (soal.strip(), jawaban.strip(), word_count), commit=True)
+            await message.reply("✅ **Soal berhasil ditambah!**")
+        except: await message.reply("❌ Format salah! Gunakan `Soal | Kata1,Kata2`")
+
+    elif "start baru" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'start_msg'", (input_data,), commit=True)
+        await message.reply("✅ **Pesan /start berhasil diubah!**")
+
+    elif "id grup log" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'log_group'", (input_data,), commit=True)
+        await message.reply(f"✅ **Log Group diset ke:** `{input_data}`")
+
+    elif "id_user | jumlah_poin" in reply_text:
+        try:
+            uid, pts = input_data.split("|")
+            db_execute("UPDATE users SET points = ? WHERE user_id = ?", (int(pts.strip()), int(uid.strip())), commit=True)
+            await message.reply(f"✅ **User** `{uid.strip()}` **sekarang punya** `{pts.strip()}` **poin.**")
+        except Exception as e: await message.reply(f"❌ **Gagal!** Pastikan format benar: `ID_USER | POIN`\nError: {e}")
+
+    elif "broadcast" in reply_text:
+        users = db_execute("SELECT user_id FROM users")
+        await message.reply("🚀 **Memulai Broadcast...**")
+        count = 0
+        for (uid,) in users:
+            try:
+                await client.send_message(uid, input_data)
+                count += 1
+                await asyncio.sleep(0.1) # Biar gak kena floodwait
+            except: pass
+        await message.reply(f"✅ **Selesai!** Berhasil kirim ke {count} user.")
+
+    elif "link telegram lu" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'link_dev'", (input_data,), commit=True)
+        await message.reply("✅ **Link Owner berhasil diupdate!**")
+
+    elif "link grup support" in reply_text:
+        db_execute("UPDATE settings SET value = ? WHERE key = 'link_sup'", (input_data,), commit=True)
+        await message.reply("✅ **Link Support berhasil diupdate!**")
+
 # --- STARTUP ---
 async def start_bot():
     await app.start()
-    await app.set_bot_commands([
-        BotCommand("start", "Cek Status"),
-        BotCommand("help", "Cara Main"),
-        BotCommand("mulai", "Mainkan Game"),
-        BotCommand("top", "Leaderboard"),
-        BotCommand("gabung", "Join Lobi"),
-        BotCommand("keluar", "Keluar Game"),
-        BotCommand("stop", "Hentikan Game")
-    ], scope=BotCommandScopeAllGroupChats())
-    print("🚀 Bot Ready!")
-    await idle()
+    
+    # 1. Daftar CMD buat SEMUA ORANG (Private & Group)
+    user_commands = [
+        BotCommand("start", "Cek status & profil"),
+        BotCommand("help", "Cara bermain"),
+        BotCommand("mulai", "Buka lobi game"),
+        BotCommand("top", "Lihat peringkat 10 besar"),
+        BotCommand("gabung", "Gabung ke lobi"),
+        BotCommand("keluar", "Keluar dari game/lobi"),
+        BotCommand("stop", "Berhentikan game (Admin grup)")
+    ]
+    await app.set_bot_commands(user_commands) # Default scope
+    
+    # 2. Daftar CMD buat ADMIN (Hanya Owner di Private)
+    admin_commands = [
+        BotCommand("admin", "Panel Kontrol Admin UI"),
+        BotCommand("start", "Restart panel")
+    ]
+    await app.set_bot_commands(admin_commands, scope=BotCommandScopeChat(OWNER_ID))
 
+    print("🚀 Bot Tebak Berantai is Running!")
+    await idle()
 if __name__ == "__main__":
     init_db()
     app.run(start_bot())
