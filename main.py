@@ -208,9 +208,10 @@ async def check_answer(client, message):
             
             # Cari soal baru
             qs_list = get_new_question(chat_id, len(game["players"]))
-            if not qs_list:
-                await message.reply("🏁 **SOAL HABIS!** Game selesai.")
-                return del games[chat_id]
+           if not qs_list:
+               await message.reply("🏁 **SOAL HABIS!** Game selesai.")
+               if chat_id in games: del games[chat_id]
+               return
             
             q = random.choice(qs_list)
             game["soal"] = q[1]
@@ -230,7 +231,8 @@ async def check_answer(client, message):
             await message.reply(f"❌ 3x Salah! {message.from_user.mention} dikick. Sisa pemain: {len(game['players'])}")
             if len(game["players"]) < 2:
                 await message.reply("📉 Pemain kurang dari 2. Game bubar!")
-                return del games[chat_id]
+                if chat_id in games: del games[chat_id]
+                return
             if game["turn"] >= len(game["players"]): game["turn"] = 0
             p_next = await client.get_users(game["players"][game["turn"]])
             await message.reply(f"👉 Giliran dialihkan ke {p_next.mention}!")
